@@ -1,14 +1,193 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Shape Editor Website</title>
+  <meta charset="UTF-8" />
+  <title>Shape Editor Website</title>
 </head>
 <body>
-    <svg style="width: 1000px; height: 1000px;"></svg>
-    <script>
+  <h1 id="message">pick a command</h1>
 
-      
-    </script>
+  <svg style="width: 1000px; height: 1000px;">
+    <!-- command boxes (made of shapes) -->
+    <g id="buttonCreate">
+      <rect x="10"  y="10" width="80" height="28" fill="#eee" stroke="#000"/>
+      <text x="50"  y="28" text-anchor="middle">Create</text>
+    </g>
+    <g id="buttonMove">
+      <rect x="100" y="10" width="80" height="28" fill="#eee" stroke="#000"/>
+      <text x="140" y="28" text-anchor="middle">Move</text>
+    </g>
+    <g id="buttonDelete">
+      <rect x="190" y="10" width="80" height="28" fill="#eee" stroke="#000"/>
+      <text x="230" y="28" text-anchor="middle">Delete</text>
+    </g>
+
+    <!-- shape type boxes (HIDDEN until Create) -->
+    <g id="buttonRectangle" visibility="hidden">
+      <rect x="10"  y="50" width="100" height="28" fill="#eee" stroke="#000"/>
+      <text x="60"  y="68" text-anchor="middle">Rectangle</text>
+    </g>
+    <g id="buttonCircle" visibility="hidden">
+      <rect x="120" y="50" width="100" height="28" fill="#eee" stroke="#000"/>
+      <text x="170" y="68" text-anchor="middle">Circle</text>
+    </g>
+  </svg>
+
+  <script>
+    // simple names
+    const svgBox  = document.querySelector('svg');
+    const message = document.getElementById('message');
+
+    let mode       = 'idle';
+    let picked     = -1;
+    let nextIdNum  = 0;
+    let blinkTimer = null;
+
+    // shapes we create: {id, kind:'rect'|'circle', x,y, w,h or r, color, el}
+    const shapes = [];
+
+    // command/type groups (used as buttons)
+    const buttons = [
+      { id:'buttonCreate',    group: document.getElementById('buttonCreate') },
+      { id:'buttonMove',      group: document.getElementById('buttonMove') },
+      { id:'buttonDelete',    group: document.getElementById('buttonDelete') },
+      { id:'buttonRectangle', group: document.getElementById('buttonRectangle') },
+      { id:'buttonCircle',    group: document.getElementById('buttonCircle') },
+    ];
+
+    const say = txt => message.textContent = txt;
+
+    // show/hide Rectangle/Circle choices
+    function showShapeChoices(on){
+      document.getElementById('buttonRectangle').setAttribute('visibility', on ? 'visible' : 'hidden');
+      document.getElementById('buttonCircle').setAttribute('visibility', on ? 'visible' : 'hidden');
+    }
+
+    // convert mouse click (screen) -> SVG x,y
+    function clickToSvgPoint(event){
+      const pt = svgBox.createSVGPoint();
+      pt.x = event.clientX; pt.y = event.clientY;
+      const p = pt.matrixTransform(svgBox.getScreenCTM().inverse());
+      return { x: p.x, y: p.y };
+    }
+
+    // which command/type group was clicked? (SVG coords via getBBox)
+    function whichButtonByBox(x, y){
+      for (const b of buttons){
+        if (b.group.getAttribute('visibility') === 'hidden') continue;
+        const bb = b.group.getBBox();
+        if (x >= bb.x && x <= bb.x + bb.width &&
+            y >= bb.y && y <= bb.y + bb.height) return b.id;
+      }
+      return null;
+    }
+
+    // which drawn shape was clicked? (topmost first)
+    function whichShape(x,y){
+      for (let i = shapes.length - 1; i >= 0; i--){
+        const s = shapes[i];
+        if (s.kind === 'rect'){
+          if (x>=s.x-s.w/2 && x<=s.x+s.w/2 && y>=s.y-s.h/2 && y<=s.y+s.h/2) return i;
+        } else {
+          const dx=x-s.x, dy=y-s.y;
+          if (dx*dx + dy*dy <= s.r*s.r) return i;
+        }
+      }
+      return -1;
+    }
+
+    // blink while moving
+    function startBlinking(i){
+      stopBlinking();
+      const s = shapes[i]; if (!s) return;
+      let on = false;
+      blinkTimer = setInterval(()=>{
+        if (!s.el || !s.el.isConnected){ stopBlinking(); return; }
+        s.el.setAttribute('fill', on ? 'transparent' : s.color);
+        on = !on;
+      }, 250);
+    }
+    function stopBlinking(){
+      if (blinkTimer){ clearInterval(blinkTimer); blinkTimer = null; }
+      if (picked>=0 && shapes[picked]) shapes[picked].el.setAttribute('fill', shapes[picked].color);
+    }
+
+    // create / move / delete
+    function createRectangle(x,y,w=100,h=60,color='#9cf'){
+      const n = document.createElementNS(svgBox.namespaceURI,'rect');
+      n.setAttribute('x', x - w/2);
+      n.setAttribute('y', y - h/2);
+      n.setAttribute('width', w);
+      n.setAttribute('height', h);
+      n.setAttribute('fill', color);
+      n.setAttribute('stroke', '#000');
+      const id = 'id' + (nextIdNum++); n.id = id;
+      svgBox.appendChild(n);
+      shapes.push({ id, kind:'rect', x, y, w, h, color, el:n });
+    }
+    function createCircle(x,y,r=34,color='#f9a'){
+      const n = document.createElementNS(svgBox.namespaceURI,'circle');
+      n.setAttribute('cx', x);
+      n.setAttribute('cy', y);
+      n.setAttribute('r', r);
+      n.setAttribute('fill', color);
+      n.setAttribute('stroke', '#000');
+      const id = 'id' + (nextIdNum++); n.id = id;
+      svgBox.appendChild(n);
+      shapes.push({ id, kind:'circle', x, y, r, color, el:n });
+    }
+    function moveShape(i,x,y){
+      const s = shapes[i]; if (!s) return;
+      s.x = x; s.y = y;
+      if (s.kind==='rect'){
+        s.el.setAttribute('x', x - s.w/2);
+        s.el.setAttribute('y', y - s.h/2);
+      } else {
+        s.el.setAttribute('cx', x);
+        s.el.setAttribute('cy', y);
+      }
+    }
+    function deleteShape(i){
+      const s = shapes[i]; if (!s) return;
+      svgBox.removeChild(s.el);
+      shapes.splice(i,1);
+    }
+
+    // one small brain (state machine) — using full click
+    svgBox.addEventListener('click', (event)=>{
+      const { x, y } = clickToSvgPoint(event);
+      const btn = whichButtonByBox(x, y);
+
+      // commands
+      if (btn==='buttonCreate'){ mode='idle'; picked=-1; stopBlinking(); showShapeChoices(true);  say('pick rectangle or circle'); return; }
+      if (btn==='buttonMove')  { mode='pick_move';  picked=-1; stopBlinking(); showShapeChoices(false); say('click a shape to move'); return; }
+      if (btn==='buttonDelete'){ mode='pick_delete'; picked=-1; stopBlinking(); showShapeChoices(false); say('click a shape to delete'); return; }
+
+      // type choices
+      if (btn==='buttonRectangle'){ mode='create_rect';   say('click on the canvas'); return; }
+      if (btn==='buttonCircle')   { mode='create_circle'; say('click on the canvas'); return; }
+
+      // canvas actions
+      if (mode==='create_rect'){   createRectangle(x,y); showShapeChoices(false); mode='idle'; say('pick a command'); return; }
+      if (mode==='create_circle'){ createCircle(x,y);    showShapeChoices(false); mode='idle'; say('pick a command'); return; }
+
+      if (mode==='pick_move'){
+        const i = whichShape(x,y);
+        if (i>=0){ picked=i; startBlinking(i); mode='place'; say('click new spot'); }
+        return;
+      }
+      if (mode==='place'){
+        if (picked>=0){ stopBlinking(); moveShape(picked,x,y); picked=-1; mode='idle'; say('pick a command'); }
+        return;
+      }
+      if (mode==='pick_delete'){
+        const i = whichShape(x,y);
+        if (i>=0){ deleteShape(i); mode='idle'; say('pick a command'); }
+        return;
+      }
+
+      say('pick a command');
+    });
+  </script>
 </body>
 </html>

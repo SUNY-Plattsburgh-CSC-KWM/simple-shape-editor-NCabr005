@@ -38,103 +38,139 @@
     const svgBox  = document.querySelector('svg');
     const message = document.getElementById('message');
 
-    let mode       = 'idle';
-    let picked     = -1;
-    let nextIdNum  = 0;
-    let blinkTimer = null;
+    let currentMode = 'idle';        // What the user is doing right now
+    let selectedShape = -1;          // Which shape is selected (-1 = none)
+    let nextShapeId = 0;             // Counter for giving shapes unique IDs
+    let blinkTimer = null;           // Timer for making shapes blink
 
     // shapes we create: {id, kind:'rect'|'circle', x,y, w,h or r, color, el}
     const shapes = [];
 
-    // command/type groups (used as buttons)
-    const buttons = [
-      { id:'buttonCreate',    group: document.getElementById('buttonCreate') },
-      { id:'buttonMove',      group: document.getElementById('buttonMove') },
-      { id:'buttonDelete',    group: document.getElementById('buttonDelete') },
-      { id:'buttonRectangle', group: document.getElementById('buttonRectangle') },
-      { id:'buttonCircle',    group: document.getElementById('buttonCircle') },
-    ];
+    // No need for buttons array - we can detect clicks directly!
 
     const say = txt => message.textContent = txt;
 
-    // show/hide Rectangle/Circle choices
+    // show/hide Rectangle/Circle choices (simplified)
     function showShapeChoices(on){
-      document.getElementById('buttonRectangle').setAttribute('visibility', on ? 'visible' : 'hidden');
-      document.getElementById('buttonCircle').setAttribute('visibility', on ? 'visible' : 'hidden');
+      const visibility = on ? 'visible' : 'hidden';
+      document.getElementById('buttonRectangle').setAttribute('visibility', visibility);
+      document.getElementById('buttonCircle').setAttribute('visibility', visibility);
     }
 
-    // convert mouse click (screen) -> SVG x,y
-    function clickToSvgPoint(event){
-      const pt = svgBox.createSVGPoint();
-      pt.x = event.clientX; pt.y = event.clientY;
-      const p = pt.matrixTransform(svgBox.getScreenCTM().inverse());
-      return { x: p.x, y: p.y };
+    // convert mouse click to SVG coordinates (much simpler for beginners!)
+    function getClickPosition(event){
+      // Get the SVG's position on the page
+      const svgRect = svgBox.getBoundingClientRect();
+      
+      // Calculate click position relative to SVG
+      const x = event.clientX - svgRect.left;
+      const y = event.clientY - svgRect.top;
+      
+      return { x: x, y: y };
     }
 
-    // which command/type group was clicked? (SVG coords via getBBox)
-    function whichButtonByBox(x, y){
-      for (const b of buttons){
-        if (b.group.getAttribute('visibility') === 'hidden') continue;
-        const bb = b.group.getBBox();
-        if (x >= bb.x && x <= bb.x + bb.width &&
-            y >= bb.y && y <= bb.y + bb.height) return b.id;
+    // which button was clicked? (even simpler!)
+    function getClickedButton(event){
+      const clickedElement = event.target;
+      
+      // Find the button group that was clicked
+      const buttonGroup = clickedElement.closest('g[id^="button"]');
+      
+      // Make sure the button is visible (not hidden)
+      if (buttonGroup && buttonGroup.getAttribute('visibility') !== 'hidden') {
+        return buttonGroup.id;
       }
-      return null;
+      
+      return null;  // No visible button was clicked
     }
 
-    // which drawn shape was clicked? (topmost first)
-    function whichShape(x,y){
-      for (let i = shapes.length - 1; i >= 0; i--){
-        const s = shapes[i];
-        if (s.kind === 'rect'){
-          if (x>=s.x-s.w/2 && x<=s.x+s.w/2 && y>=s.y-s.h/2 && y<=s.y+s.h/2) return i;
-        } else {
-          const dx=x-s.x, dy=y-s.y;
-          if (dx*dx + dy*dy <= s.r*s.r) return i;
+    // which shape was clicked? (super simple!)
+    function getClickedShape(event){
+      const clickedElement = event.target;
+      
+      // Check if it's a shape we created (has our special ID)
+      if ((clickedElement.tagName === 'rect' || clickedElement.tagName === 'circle') 
+          && clickedElement.id.startsWith('id')) {
+        
+        // Find which shape in our array matches this element
+        return shapes.findIndex(shape => shape.el === clickedElement);
+      }
+      return -1;  // Not one of our shapes
+    }
+
+    // make a shape blink to show it's selected
+    function startBlinking(shapeIndex){
+      stopBlinking();  // Stop any current blinking first
+      
+      const shape = shapes[shapeIndex];
+      if (!shape) return;
+      
+      let isVisible = false;  // Track if shape is currently visible or hidden
+      blinkTimer = setInterval(() => {
+        // Make sure shape still exists
+        if (!shape.el || !shape.el.isConnected) { 
+          stopBlinking(); 
+          return; 
         }
-      }
-      return -1;
+        
+        // Toggle between visible (normal color) and invisible (transparent)
+        shape.el.setAttribute('fill', isVisible ? 'transparent' : shape.color);
+        isVisible = !isVisible;
+      }, 250);  // Blink every 250ms
     }
-
-    // blink while moving
-    function startBlinking(i){
-      stopBlinking();
-      const s = shapes[i]; if (!s) return;
-      let on = false;
-      blinkTimer = setInterval(()=>{
-        if (!s.el || !s.el.isConnected){ stopBlinking(); return; }
-        s.el.setAttribute('fill', on ? 'transparent' : s.color);
-        on = !on;
-      }, 250);
-    }
+    
     function stopBlinking(){
-      if (blinkTimer){ clearInterval(blinkTimer); blinkTimer = null; }
-      if (picked>=0 && shapes[picked]) shapes[picked].el.setAttribute('fill', shapes[picked].color);
+      // Stop the blinking timer
+      if (blinkTimer) { 
+        clearInterval(blinkTimer); 
+        blinkTimer = null; 
+      }
+      
+      // Make sure the selected shape is visible again
+      if (selectedShape >= 0 && shapes[selectedShape]) {
+        shapes[selectedShape].el.setAttribute('fill', shapes[selectedShape].color);
+      }
     }
 
-    // create / move / delete
-    function createRectangle(x,y,w=100,h=60,color='#9cf'){
-      const n = document.createElementNS(svgBox.namespaceURI,'rect');
-      n.setAttribute('x', x - w/2);
-      n.setAttribute('y', y - h/2);
-      n.setAttribute('width', w);
-      n.setAttribute('height', h);
-      n.setAttribute('fill', color);
-      n.setAttribute('stroke', '#000');
-      const id = 'id' + (nextIdNum++); n.id = id;
-      svgBox.appendChild(n);
-      shapes.push({ id, kind:'rect', x, y, w, h, color, el:n });
+    // create / move / delete shapes
+    function createRectangle(x, y, width=100, height=60, color='#9cf'){
+      // Create a new rectangle element
+      const rect = document.createElementNS(svgBox.namespaceURI, 'rect');
+      
+      // Position it centered on the click point
+      rect.setAttribute('x', x - width/2);
+      rect.setAttribute('y', y - height/2);
+      rect.setAttribute('width', width);
+      rect.setAttribute('height', height);
+      rect.setAttribute('fill', color);
+      rect.setAttribute('stroke', '#000');
+      
+      // Give it a unique ID so we can find it later
+      const id = 'id' + (nextShapeId++); 
+      rect.id = id;
+      
+      // Add it to the SVG and remember it in our shapes list
+      svgBox.appendChild(rect);
+      shapes.push({ id, kind:'rect', x, y, w:width, h:height, color, el:rect });
     }
-    function createCircle(x,y,r=34,color='#f9a'){
-      const n = document.createElementNS(svgBox.namespaceURI,'circle');
-      n.setAttribute('cx', x);
-      n.setAttribute('cy', y);
-      n.setAttribute('r', r);
-      n.setAttribute('fill', color);
-      n.setAttribute('stroke', '#000');
-      const id = 'id' + (nextIdNum++); n.id = id;
-      svgBox.appendChild(n);
-      shapes.push({ id, kind:'circle', x, y, r, color, el:n });
+    function createCircle(x, y, radius=34, color='#f9a'){
+      // Create a new circle element
+      const circle = document.createElementNS(svgBox.namespaceURI, 'circle');
+      
+      // Position it at the click point
+      circle.setAttribute('cx', x);
+      circle.setAttribute('cy', y);
+      circle.setAttribute('r', radius);
+      circle.setAttribute('fill', color);
+      circle.setAttribute('stroke', '#000');
+      
+      // Give it a unique ID so we can find it later
+      const id = 'id' + (nextShapeId++); 
+      circle.id = id;
+      
+      // Add it to the SVG and remember it in our shapes list
+      svgBox.appendChild(circle);
+      shapes.push({ id, kind:'circle', x, y, r:radius, color, el:circle });
     }
     function moveShape(i,x,y){
       const s = shapes[i]; if (!s) return;
@@ -153,36 +189,92 @@
       shapes.splice(i,1);
     }
 
-    // one small brain (state machine) — using full click
-    svgBox.addEventListener('click', (event)=>{
-      const { x, y } = clickToSvgPoint(event);
-      const btn = whichButtonByBox(x, y);
+    // main click handler (this is the "brain" of our app!)
+    svgBox.addEventListener('click', (event) => {
+      const { x, y } = getClickPosition(event);
+      const buttonClicked = getClickedButton(event);
 
-      // commands
-      if (btn==='buttonCreate'){ mode='idle'; picked=-1; stopBlinking(); showShapeChoices(true);  say('pick rectangle or circle'); return; }
-      if (btn==='buttonMove')  { mode='pick_move';  picked=-1; stopBlinking(); showShapeChoices(false); say('click a shape to move'); return; }
-      if (btn==='buttonDelete'){ mode='pick_delete'; picked=-1; stopBlinking(); showShapeChoices(false); say('click a shape to delete'); return; }
+      // Handle button clicks first
+      if (buttonClicked === 'buttonCreate') { 
+        currentMode = 'idle'; 
+        selectedShape = -1; 
+        stopBlinking(); 
+        showShapeChoices(true);  
+        say('pick rectangle or circle'); 
+        return; 
+      }
+      if (buttonClicked === 'buttonMove') { 
+        currentMode = 'pick_move';  
+        selectedShape = -1; 
+        stopBlinking(); 
+        showShapeChoices(false); 
+        say('click a shape to move'); 
+        return; 
+      }
+      if (buttonClicked === 'buttonDelete') { 
+        currentMode = 'pick_delete'; 
+        selectedShape = -1; 
+        stopBlinking(); 
+        showShapeChoices(false); 
+        say('click a shape to delete'); 
+        return; 
+      }
 
-      // type choices
-      if (btn==='buttonRectangle'){ mode='create_rect';   say('click on the canvas'); return; }
-      if (btn==='buttonCircle')   { mode='create_circle'; say('click on the canvas'); return; }
+      // Handle shape type choices
+      if (buttonClicked === 'buttonRectangle') { 
+        currentMode = 'create_rect';   
+        say('click on the canvas'); 
+        return; 
+      }
+      if (buttonClicked === 'buttonCircle') { 
+        currentMode = 'create_circle'; 
+        say('click on the canvas'); 
+        return; 
+      }
 
-      // canvas actions
-      if (mode==='create_rect'){   createRectangle(x,y); showShapeChoices(false); mode='idle'; say('pick a command'); return; }
-      if (mode==='create_circle'){ createCircle(x,y);    showShapeChoices(false); mode='idle'; say('pick a command'); return; }
+      // Handle clicking on the canvas (different actions based on current mode)
+      if (currentMode === 'create_rect') {   
+        createRectangle(x, y); 
+        showShapeChoices(false); 
+        currentMode = 'idle'; 
+        say('pick a command'); 
+        return; 
+      }
+      if (currentMode === 'create_circle') { 
+        createCircle(x, y);    
+        showShapeChoices(false); 
+        currentMode = 'idle'; 
+        say('pick a command'); 
+        return; 
+      }
 
-      if (mode==='pick_move'){
-        const i = whichShape(x,y);
-        if (i>=0){ picked=i; startBlinking(i); mode='place'; say('click new spot'); }
+      if (currentMode === 'pick_move') {
+        const shapeIndex = getClickedShape(event);
+        if (shapeIndex >= 0) { 
+          selectedShape = shapeIndex; 
+          startBlinking(shapeIndex); 
+          currentMode = 'place'; 
+          say('click new spot'); 
+        }
         return;
       }
-      if (mode==='place'){
-        if (picked>=0){ stopBlinking(); moveShape(picked,x,y); picked=-1; mode='idle'; say('pick a command'); }
+      if (currentMode === 'place') {
+        if (selectedShape >= 0) { 
+          stopBlinking(); 
+          moveShape(selectedShape, x, y); 
+          selectedShape = -1; 
+          currentMode = 'idle'; 
+          say('pick a command'); 
+        }
         return;
       }
-      if (mode==='pick_delete'){
-        const i = whichShape(x,y);
-        if (i>=0){ deleteShape(i); mode='idle'; say('pick a command'); }
+      if (currentMode === 'pick_delete') {
+        const shapeIndex = getClickedShape(event);
+        if (shapeIndex >= 0) { 
+          deleteShape(shapeIndex); 
+          currentMode = 'idle'; 
+          say('pick a command'); 
+        }
         return;
       }
 
